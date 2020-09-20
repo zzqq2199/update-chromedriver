@@ -88,7 +88,7 @@ def donwload_driver(driver_version, url, save_dir):
     zfile.close()
     os.remove(save_path)
 
-def check_and_update(chromedriver_path, mirror_url):
+def check_and_update(chromedriver_path, mirror_url='http://npm.taobao.org/mirrors/chromedriver/'):
     print(f"chromdriver.exe路径：{chromedriver_path}")
     print(f"chromedriver镜像网站：{mirror_url}")
     chrome_version = get_chrome_version()
