@@ -1,120 +1,100 @@
+"""
+@author: zzqq2199
+@reference: https://github.com/cgcel/chromedriver_updater/blob/master/chromedriver_updater.py
+"""
 import winreg
 import re
 import traceback
 import os
-DRIVER_CONFIG_PATH = "./driver.json"
-
-version_re = re.compile(r'^[1-9]\d*\.\d*.\d*')
-
-def version_cmp(v1, v2):
-    '''
-    v1>v2: return 1
-    v1==v2:return 0
-    v1<v2: return -1
-    '''
-    l1 = list(map(int, v1.split('.')))
-    l2 = list(map(int, v2.split('.')))
-    for i in range(min(len(l1),len(l2))):
-        if l1[i] < l2[i]: return -1
-        if l1[i] > l2[i]: return 1
-    if len(l1) < len(l2): return -1
-    if len(l1) > len(l2): return 1
-    return 0
+import zipfile
+import requests
+from zq_tools.zq_logger import default_logger as logger
 
 def get_chrome_version():
+    """
+    通过注册表查找chrome版本号
+    """
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Google\Chrome\BLBeacon')
         _v, type = winreg.QueryValueEx(key, 'version')
-        print(f'Current Chrome Version: {_v}')
+        logger.info(f'Current Chrome Version: {_v}')
         return _v
     except:
-        print(f"check chrome version failed:\n{traceback.format_exc()}")
+        logger.fatal(f"check chrome version failed:\n{traceback.format_exc()}")
 
 def get_driver_version(driver_path):
+    """
+    查看给定chromedriver的版本号
+    """
     cmd = fr'{driver_path} --version'
     import subprocess
     try:
-        print(f"cmd={cmd}")
+        logger.debug(f"cmd={cmd}")
         out, err = subprocess.Popen(cmd, shell=True,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.PIPE
         ).communicate()
         out = out.decode('utf-8')
         _v = out.split(' ')[1]
-        print(f'Current Chromedriver Version: {_v}')
+        logger.info(f'Current Chromedriver Version: {_v}')
         return _v
     except:
-        print(f"check chromedriver version failed:\n{traceback.format_exc()}")
+        logger.warning(f"check chromedriver version failed:\n{traceback.format_exc()}")
         return 0
         
 def get_matched_chromedriver_version(chrome_version, url):
-    import urllib.request
-    import urllib.parse
-    import zipfile
-    rep = urllib.request.urlopen(url).read().decode('utf-8')
-    directory = re.compile(r'>(\d.*?/)</a>').findall(rep)
-    # print(directory)
-    chrome_driver_version = ""
-    for dir in directory:
-        if version_cmp(dir[:-1],chrome_version)==-1:
-            chrome_driver_version = dir[:-1]
-    return chrome_driver_version
+    """
+    确定与chrome版本对应的chromedriver版本
+    在满足前3个分段版本号一致的前提下，下载最新的chromedriver版本
+    例如chrome version=104.0.5112.81
+    镜像网站上对应满足要求的chromedriver版本号有 104.0.5112.20, 104.0.5112.29, 104.0.5112.79
+    则返回104.0.5112.79
+    """
+    r = requests.get(url, timeout=5)
+    result = r.json()
+    target_version = ''
+    version_list = chrome_version.split('.')[:-1]
+    version = '.'.join(version_list)
+    # logger.debug(f"result={result}")
+    for i in result:
+        if version in i['name']:
+            if i['type'] == 'dir':
+                target_version = i['name']
+    target_version = target_version.strip("/")
+    assert(target_version!="")
+    return target_version
+        
+def download_driver_from_mirror(driver_version, url, save_dir="."):
+    target_download_url = f"{url}/{driver_version}/chromedriver_win32.zip"
+    print(f"driver download url = {target_download_url}")
+    r = requests.get(target_download_url)
 
-def donwload_driver(driver_version, url, save_dir):   
-    import urllib.request
-    import urllib.parse
-    import zipfile
-    def progress_func(blocknum, blocksize, totalsize):
-        percent = 100.0 * blocknum * blocksize / totalsize
-        if percent > 100: percent = 100
-        downsize = blocknum * blocksize
-        if downsize > totalsize: downsize = totalsize
-        s = f"{percent:.2f}% ====> {downsize/1024/1024:.2f}M/{totalsize/1024/1024:.2f}M \r"
-        import sys
-        sys.stdout.write(s)
-        sys.stdout.flush()
-        if percent == 100:
-            print('')
-    print(f"save_dir={save_dir}")
-    dir_url = urllib.parse.urljoin(url, driver_version+"/")
-    down_url = urllib.parse.urljoin(dir_url, 'chromedriver_win32.zip')
-    print(f"down_url={down_url}")
-    save_path = os.path.join(save_dir, os.path.basename(down_url))
-    print(f"save_path={save_path}")
-    urllib.request.urlretrieve(down_url, save_path, progress_func)
-    zfile = zipfile.ZipFile(save_path, 'r')
-    for fileM in zfile.namelist():
-        zfile.extract(fileM, os.path.dirname(save_path))
-    zfile.close()
-    os.remove(save_path)
+    save_path = os.path.join(save_dir, "chromedriver_win32.zip")
+    with open(save_path, "wb") as file:
+        print("开始国内源下载...", end="")
+        file.write(r.content)
+        print("下载完成")
+        zipfile.ZipFile(save_path).extractall()
+        print("解压完成")
 
-def check_and_update(chromedriver_path, mirror_url='http://npm.taobao.org/mirrors/chromedriver/'):
-    print(f"chromdriver.exe路径：{chromedriver_path}")
-    print(f"chromedriver镜像网站：{mirror_url}")
+def check_and_update(chromedriver_path, url='https://registry.npmmirror.com/-/binary/chromedriver'):
     chrome_version = get_chrome_version()
     current_driver_version = get_driver_version(chromedriver_path)
-    print(f"当前Chrome版本号：{chrome_version}")
-    print(f"当前chromedriver版本号：{current_driver_version}")
-    print(f"查询与Chrome版本号{chrome_version}对应的chromedriver版本号...")
-    driver_version = get_matched_chromedriver_version(chrome_version,mirror_url)
-    print(f"与当前Chrome版本号{chrome_version}对应的chromedriver版本号为:{driver_version}")
-    if driver_version == current_driver_version:
-        print(f"chromedriver版本匹配！")
+    logger.info(f"Current Chrome Version: {chrome_version}")
+    logger.info(f"Current ChromeDriver Version: {current_driver_version}")
+    matched_driver_version = get_matched_chromedriver_version(chrome_version,url)
+    logger.info(f"Matched ChromeDriver Version: {matched_driver_version}")
+    if matched_driver_version == current_driver_version:
+        logger.info("Current ChromeDriver matches Chrome, No need to update")
     else:
-        print(f"chromedriver版本不匹配！准备下载")
-        donwload_driver(driver_version, mirror_url, os.path.split(chromedriver_path)[0])
-        print(f"chromedriver版本更新完毕")
+        logger.info(f"Downloading ChromeDriver Version: {matched_driver_version}")
+        download_driver_from_mirror(matched_driver_version, url, os.path.split(chromedriver_path)[0])
         new_driver_version = get_driver_version(chromedriver_path)
-        print(f"更新后的chromedriver版本号：{new_driver_version}")
+        logger.info(f"Updated ChromeDriver Version: {new_driver_version}")
     
 
 if __name__ == '__main__':
-    with open(DRIVER_CONFIG_PATH, 'r') as f:
-        content = f.read()
-        import json
-        driver_config = json.loads(content)
     check_and_update(
-        driver_config['chromedriver_path'],
-        driver_config['mirror_url']
+        chromedriver_path=r".\chromedriver.exe",
     )
-
+    
