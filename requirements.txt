@@ -1,0 +1,2 @@
+requests==2.27.1
+zq_tools==0.8.2
